@@ -36,7 +36,7 @@ def predict(
     with open(model_fname, "rb") as fin:
         model = pickle.load(fin)
 
-    if model.__class__.__name__ == 'kmers':
+    if model.__class__.__name__.lower() == 'kmers':
         embeddings = pd.read_csv(input_csv)[seq_col].values
     else:
         embeddings = dataset2embeddings(input_csv, seq_col)
