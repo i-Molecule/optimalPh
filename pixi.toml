@@ -1,0 +1,24 @@
+[workspace]
+authors = ["Mark Zaretckii, Pavel Buslaev, Igor Kozlovskii, Alexander Morozov, Petr Popov"]
+channels = ["conda-forge", "nvidia"]
+channel-priority = "disabled"
+name = "optimalPh_pixi"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+download_weights = {cmd = "gdown --folder 'https://drive.google.com/drive/folders/1CRKzq3DGFjlTH3MzTZ8a3AQaB23YrfCn?usp=drive_link'"}
+
+[dependencies]
+python = "*"
+
+[pypi-dependencies]
+torch = "*"
+fairscale = "*"
+fair-esm = "*"
+xgboost = "*"
+fire = "*"
+pandas = "*"
+scikit-learn = "*"
+tqdm = "*"
+gdown = "*"

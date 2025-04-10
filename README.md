@@ -9,6 +9,23 @@ Please check our publication [Approaching Optimal pH Enzyme Prediction with Larg
 
 
 # Environment
+
+### Pixi(recommended)
+```bash
+# Downloading for Linux & macOS
+curl -fsSL https://pixi.sh/install.sh | bash
+
+# run
+pixi shell
+
+# download weights
+pixi run download_weights
+
+# get predictions
+python3 code/predict.py --input_csv data/sequences.csv --seq_col sequence --model_fname ophnet_weights/model_xgboost --output_csv data/sequences_scored.csv
+```
+
+### Conda
 To create the environment with conda (tested on Ubuntu 22.04):
 ```bash
 conda create -n esm_env
@@ -25,7 +42,7 @@ You can download the model weights from the Constructor Research Platform projec
 
 
 ```bash
-python3 code/predict.py --input_csv sequences.csv --seq_col sequence --model_fname weights/model_xgboost --output_csv sequences_scored.csv
+python3 code/predict.py --input_csv sequences.csv --seq_col sequence --model_fname ophnet_weights/model_xgboost --output_csv sequences_scored.csv
 ```
 
 # Train
