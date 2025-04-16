@@ -67,5 +67,5 @@ JSON file containing info about your model should look as follows:
 ```
 
 ```bash
-python3 code/final_train.py --models experiments/best_models.jso --data data/embeddings/brenda_new_emb.npy --output_dir weights/ --prefix model --csv_input data/datasets/brenda_new.csv
+python3 code/final_train.py --models experiments/best_models.json --data data/embeddings/brenda_new_emb.npy --output_dir weights/ --prefix model --csv_input data/datasets/brenda_new.csv
 ```

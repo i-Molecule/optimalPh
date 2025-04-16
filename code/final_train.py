@@ -1,4 +1,3 @@
-from collections import defaultdict
 import json
 import os
 import numpy as np
@@ -46,6 +45,7 @@ def main(
             model.fit(X, y)
 
         output_name = Path(output_dir).joinpath(f"{prefix}_{m.get("type")}")
+        output_name.parent.mkdir(exist_ok=True, parents=True)
         try:
             with open(output_name, "wb") as fout:
                 pickle.dump(model, fout)
