@@ -157,7 +157,7 @@ def get_esm_embeddings_batched(
     batch_converter,
     max_tokens_per_batch: int = 10000,
     use_cuda: bool = True,
-) -> np.array:
+) -> np.ndarray:
     model.eval()
     batches = prepare_batches(
         sequences, max_tokens_per_batch
@@ -207,14 +207,14 @@ def get_esm_embeddings_batched(
 
 
 def PCA_reduction(
-    embeddings_train: np.array, embeddings_test: np.array, n: int = 32
-) -> np.array:
+    embeddings_train: np.ndarray, embeddings_test: np.ndarray, n: int = 32
+) -> np.ndarray:
     reduction = PCA(n_components=n)
     reduction.fit(embeddings_train)
     return reduction.transform(embeddings_test)
 
 
-def process_dataset(df: pd.DataFrame) -> Tuple[np.array, np.array]:
+def process_dataset(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
     model, batch_converter = load_esm_model()
     sequences = df["sequence"].values
     y = df["mean_pH"].values
