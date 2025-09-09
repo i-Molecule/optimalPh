@@ -34,7 +34,7 @@ class Kmers():
         #kmerize all sequences
         with Pool(8) as p:
             all_kmers = p.map(self.get_kmers, sequences)
-
+        
         predictions = []
         for kmers in all_kmers:
             ph = 0
