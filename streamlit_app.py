@@ -1,9 +1,10 @@
 import os
-import subprocess
+import shutil
 import sys
-import pickle
 import tempfile
 from pathlib import Path
+import subprocess
+from typing import Tuple, Union
 
 import pandas as pd
 import streamlit as st
@@ -18,6 +19,76 @@ if str(CODE_DIR) not in sys.path:
 
 
 # No path listing; models are chosen by type and loaded from ophnet_weights/
+
+
+def validate_input_df(df: pd.DataFrame, seq_col: str) -> None:
+    if df.empty:
+        raise ValueError("Uploaded CSV is empty.")
+    if seq_col not in df.columns:
+        raise KeyError(f"Column `{seq_col}` not found in the uploaded CSV.")
+
+
+def weights_path_for(model_type: str) -> Path:
+    p = WEIGHTS_DIR / f"model_{model_type}"
+    if not p.exists():
+        raise FileNotFoundError(
+            f"Weights for '{model_type}' not found. Please add them to the app."
+        )
+    return p
+
+
+def predict_kmers(
+    input_csv_path: Path, seq_col: str, model_path: Path, output_csv_path: Path
+) -> pd.DataFrame:
+
+    command = [
+        "python3",
+        str(CODE_DIR / "predict.py"),
+        "--input_csv",
+        str(input_csv_path),
+        "--seq_col",
+        seq_col,
+        "--model_fname",
+        str(model_path),
+        "--output_csv",
+        str(output_csv_path),
+    ]
+    subprocess.run(command, check=True)
+    return pd.read_csv(output_csv_path)
+
+
+def predict_esm_backed(
+    input_csv_path: Path, seq_col: str, model_path: Path, output_csv_path: Path
+) -> None:
+    # Lazy import heavy deps only when needed
+    import predict as predictor  # type: ignore
+
+    predictor.predict(
+        input_csv=str(input_csv_path),
+        seq_col=seq_col,
+        model_fname=str(model_path),
+        output_csv=str(output_csv_path),
+    )
+
+
+def run_prediction(
+    input_df: pd.DataFrame, seq_col: str, model_type: str
+) -> Tuple[pd.DataFrame, Union[str, os.PathLike]]:
+    validate_input_df(input_df, seq_col)
+    model_path = weights_path_for(model_type)
+
+    with tempfile.TemporaryDirectory(delete=False) as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        tmp_input = tmpdir_path / "input.csv"
+        tmp_output = tmpdir_path / "output.csv"
+        input_df.to_csv(tmp_input, index=False)
+
+        if model_type == "kmers":
+            df = predict_kmers(tmp_input, seq_col, model_path, tmp_output)
+        else:
+            df = predict_esm_backed(tmp_input, seq_col, model_path, tmp_output)
+
+    return pd.read_csv(tmp_output), tmpdir_path
 
 
 def main():
@@ -49,127 +120,29 @@ def main():
         st.write("")
         st.caption("Note: ESM-based models (knn/xgboost) can be slow on CPU.")
 
+    tmp_dir = None
     if run_btn:
         if uploaded_csv is None:
             st.error("Please upload an input CSV.")
             st.stop()
 
-        # Read uploaded CSV into a DataFrame to validate before writing to temp file
         try:
             input_df = pd.read_csv(uploaded_csv)
-        except Exception as e:
-            st.error(f"Failed to read CSV: {e}")
-            st.stop()
-        if seq_col not in input_df.columns:
-            st.error(f"Column `{seq_col}` not found in the uploaded CSV.")
-            st.stop()
-        if input_df.empty:
-            st.error("Uploaded CSV is empty.")
-            st.stop()
-
-        # Write inputs to temp files for predictor (expects file paths)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_in:
-            input_df.to_csv(tmp_in.name, index=False)
-            tmp_input_path = Path(tmp_in.name)
-        # Resolve model weights path inside ophnet_weights/
-        model_path = WEIGHTS_DIR / f"model_{model_type}"
-        if not model_path.exists():
-            st.error(
-                f"Weights for '{model_type}' not found. Please add them to the app."
-            )
-            st.stop()
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_out:
-            tmp_output_path = Path(tmp_out.name)
-
-        if model_type in {"knn", "xgboost"}:
-            info = (
-                "Using ESM embeddings backend. This may take several minutes, "
-                "especially on CPU. A GPU is recommended."
-            )
-        elif model_type in {"kmers"}:
-            info = "Using k-mer frequency features. This should be fast."
-
-        st.info(info)
-
-        command = "python3 code/predict.py --input_csv {} --seq_col {} --model_fname {} --output_csv {}".format(
-            str(tmp_input_path),
-            seq_col,
-            str(model_path),
-            str(tmp_output_path),
-        )
-        subprocess.call(command, shell=True)
-
-        if model_type in {"knn", "xgboost"}:
-
-            # Lazy import to avoid requiring heavy deps unless needed
-            try:
-                import predict as predictor  # type: ignore
-            except Exception as e:
-                st.error(
-                    "Could not import predictor for ESM-based models.\n"
-                    "Install required deps: torch, fair-esm, fairscale, xgboost, scikit-learn, pandas.\n"
-                    f"Import error: {e}"
+            if model_type in {"knn", "xgboost"}:
+                st.info(
+                    "Using ESM embeddings backend. This may take several minutes, especially on CPU."
                 )
-                st.stop()
-
-            try:
-                with st.spinner("Running prediction…"):
-                    predictor.predict(
-                        input_csv=str(tmp_input_path),
-                        seq_col=seq_col,
-                        model_fname=str(model_path),
-                        output_csv=str(tmp_output_path),
-                    )
-            except Exception as e:
-                st.error(f"Prediction failed: {e}")
-                # Cleanup temp files
-                for p in [tmp_input_path, tmp_output_path]:
-                    try:
-                        os.unlink(p)
-                    except Exception:
-                        pass
-                st.stop()
-        elif model_type in {"kmers"}:
-            try:
-                command = "python3 code/predict.py --input_csv {} --seq_col {} --model_fname {} --output_csv {}".format(
-                str(tmp_input_path),
-                seq_col,
-                str(model_path),
-                str(tmp_output_path),
-                )
-                with st.spinner("Running prediction…"):
-                    subprocess.call(command, shell=True)
-            except Exception as e:
-                st.error(f"Prediction failed: {e}")
-                # Cleanup temp files
-                for p in [tmp_input_path, tmp_output_path]:
-                    try:
-                        os.unlink(p)
-                    except Exception:
-                        pass
-                st.stop()
-        else:
-            st.error("Unsupported model type.")
-            for p in [tmp_input_path, tmp_output_path]:
-                try:
-                    os.unlink(p)
-                except Exception:
-                    pass
-            st.stop()
-
-        # Load predictions and merge back with input
-        try:
-            pred_df = pd.read_csv(tmp_output_path)
+            with st.spinner("Running prediction…"):
+                pred_df, tmp_dir = run_prediction(input_df, seq_col, model_type)
         except Exception as e:
-            st.error(f"Failed to read prediction output: {e}")
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            st.error(f"Prediction failed: {e}")
             st.stop()
 
         merged = pd.concat(
             [input_df.reset_index(drop=True), pred_df.reset_index(drop=True)], axis=1
         )
 
-        # Prepare download
         csv_bytes = merged.to_csv(index=False).encode("utf-8")
         st.success("Prediction complete.")
         st.download_button(
@@ -180,12 +153,8 @@ def main():
             use_container_width=True,
         )
 
-        # Cleanup temp files (best-effort)
-        for p in [tmp_input_path, tmp_output_path]:
-            try:
-                os.unlink(p)
-            except Exception:
-                pass
+    if tmp_dir is not None:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -36,6 +36,20 @@ conda install fire fair-esm xgboost -y
 pip install fairscale
 ```
 
+# Streamlit App
+
+Run a simple UI to score sequences from a CSV and download predictions:
+
+```bash
+pip install streamlit  # or add to your env
+streamlit run streamlit_app.py
+```
+
+Notes:
+- Choose one of: `kmers`, `knn`, or `xgboost`. The app loads weights from `ophnet_weights/` automatically.
+- For fastest results, choose the `kmers` model (no ESM embeddings needed).
+- `knn`/`xgboost` models compute ESM embeddings and can be slow on CPU; a GPU is recommended.
+
 # Inference
 
 You can download the model weights from the Constructor Research Platform project [here](https://research.constructor.tech/platform/public/project/optimalph) or from google drive [here](https://drive.google.com/drive/folders/1CRKzq3DGFjlTH3MzTZ8a3AQaB23YrfCn?usp=sharing)
