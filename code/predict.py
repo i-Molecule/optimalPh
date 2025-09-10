@@ -15,6 +15,7 @@ sys.path.append(str(esm_code))
 
 from dataloader_v1 import process_dataset
 
+
 def dataset2embeddings(input_csv: Union[str, os.PathLike], seq_col: str) -> np.ndarray:
     df = pd.read_csv(input_csv)
     seqs = df[seq_col].values
@@ -36,7 +37,7 @@ def predict(
     with open(model_fname, "rb") as fin:
         model = pickle.load(fin)
 
-    if model.__class__.__name__.lower() == 'kmers':
+    if model.__class__.__name__.lower() == "kmers":
         embeddings = pd.read_csv(input_csv)[seq_col].values
     else:
         embeddings = dataset2embeddings(input_csv, seq_col)
@@ -49,6 +50,33 @@ def predict(
     df.to_csv(output_csv)
 
     return
+
+
+def predict_all_models(
+    input_csv: Union[str, os.PathLike],
+    seq_col: str,
+):
+
+    # load model
+    embeddings = dataset2embeddings(input_csv, seq_col)
+
+    all_predictions = {}
+    for model_name in ["knn", "xgboost"]:
+        model_path = filepath.parent.joinpath(
+            "ophnet_weights", f"model_{model_name}"
+        )
+        with open(model_path, "rb") as fin:
+            model = pickle.load(fin)
+
+        predictions = model.predict(embeddings)
+
+        all_predictions[f"y_pred_{model_name}"] = predictions.flatten().tolist()
+
+    df = pd.read_csv(input_csv)
+    for key, value in all_predictions.items():
+        df[key] = value
+
+    return df
 
 
 if __name__ == "__main__":
