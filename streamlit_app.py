@@ -48,9 +48,7 @@ def weights_path_for(model_type: str) -> Path:
 
 
 def main():
-    st.set_page_config(
-        page_title="Optimal pH Predictor", page_icon="🧪", layout="centered"
-    )
+    st.set_page_config(page_title="Optimal pH Predictor", page_icon="🧪", layout="wide")
     st.title("🧪 Optimal pH Predictor")
     st.caption("Upload a CSV of sequences and download predictions.")
 
@@ -58,34 +56,38 @@ def main():
     if "pred_df" not in st.session_state:
         st.session_state.pred_df = None
 
-    # Top header: GitHub button and pipeline image
-    repo_url = "https://github.com/i-Molecule/optimalPh"
-    paper_url = "https://pubs.acs.org/doi/full/10.1021/acssynbio.4c00465"
-    header_left, header_right = st.columns([1, 3])
-    with header_left:
+    # Two-column layout: left = links + image + inputs, right = results
+    left_col, right_col = st.columns([1, 1])
+
+    with left_col:
+        # Top header: GitHub button and pipeline image
+        repo_url = "https://github.com/i-Molecule/optimalPh"
+        paper_url = "https://pubs.acs.org/doi/full/10.1021/acssynbio.4c00465"
         try:
-            st.link_button("Open on GitHub", repo_url, use_container_width=False)
-            st.link_button("Paper", paper_url, use_container_width=False)
+            st.link_button("Open on GitHub", repo_url, use_container_width=True)
+            st.link_button("Paper", paper_url, use_container_width=True)
         except Exception:
             # Fallback for older Streamlit versions
             st.markdown(f"[Open on GitHub]({repo_url})")
             st.markdown(f"[Paper]({paper_url})")
-    with header_right:
+
         img_path = REPO_ROOT / "pictures" / "img_pipeline.jpeg"
         if img_path.exists():
             st.image(str(img_path), caption="Pipeline", use_container_width=True)
         else:
             st.warning("Image not found at pictures/img_pipeline.jpeg")
 
-    # Input controls below the header
-    with st.expander("Input options", expanded=True):
-        uploaded_csv = st.file_uploader(
-            "Upload CSV containing sequences", type=["csv"], accept_multiple_files=False
-        )
-        seq_col = st.text_input("Sequence column name", value="sequence")
+        # Input controls below the header
+        with st.expander("Input options", expanded=True):
+            uploaded_csv = st.file_uploader(
+                "Upload CSV containing sequences",
+                type=["csv"],
+                accept_multiple_files=False,
+            )
+            seq_col = st.text_input("Sequence column name", value="sequence")
 
-    st.divider()
-    run_btn = st.button("Run prediction", type="primary", use_container_width=True)
+        st.divider()
+        run_btn = st.button("Run prediction", type="primary", use_container_width=True)
 
     if run_btn:
         if uploaded_csv is None:
@@ -119,66 +121,91 @@ def main():
         st.session_state.pred_df = pred_df
         st.success("Prediction complete.")
 
-    # Show results and quick plots (persist across reruns)
+    # Show results and quick plots (persist across reruns) on the right column
     if st.session_state.pred_df is not None:
-        pred_df = st.session_state.pred_df
+        with right_col:
+            pred_df = st.session_state.pred_df
 
-        csv_bytes = pred_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="Download predictions CSV",
-            data=csv_bytes,
-            file_name="predictions.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
+            csv_bytes = pred_df.to_csv(index=False).encode("utf-8")
 
-        st.divider()
-        st.subheader("Results Preview")
-        st.dataframe(pred_df, use_container_width=True)
+            # Right-align the download button within the right column
+            st.markdown(
+                """
+                    <style>
+                    div[data-testid="stDownloadButton"] > button {
+                        background-color: #22c55e;
+                        color: white;
+                        border-color: #22c55e;
+                    }
+                    div[data-testid="stDownloadButton"] > button:hover {
+                        background-color: #16a34a;
+                        color: white;
+                        border-color: #16a34a;
+                    }
+                    div[data-testid="stDownloadButton"] > button:focus:not(:active) {
+                        box-shadow: 0 0 0 0.2rem rgba(34,197,94,0.35);
+                    }
+                    </style>
+                    """,
+                unsafe_allow_html=True,
+            )
+            st.download_button(
+                label="Download predictions CSV",
+                data=csv_bytes,
+                file_name="predictions.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
 
-        # Quick visualization of prediction columns
-        pred_cols = ["y_pred_knn", "y_pred_xgboost"]
-        numeric_cols = ["y_pred_knn", "y_pred_xgboost"]
-        for c in pred_df.columns:
-            if numeric_or_none_only(pred_df[c]):
-                numeric_cols.append(c)
-        numeric_cols = list(set(numeric_cols))  # unique only
+            st.divider()
+            st.subheader("Results Preview")
+            st.dataframe(pred_df, use_container_width=True)
 
-        if pred_cols:
-            st.subheader("Prediction Plots")
-            st.caption("Histograms per model and optional scatter for comparison.")
+            # Quick visualization of prediction columns
+            pred_cols = ["y_pred_knn", "y_pred_xgboost"]
+            numeric_cols = ["y_pred_knn", "y_pred_xgboost"]
+            for c in pred_df.columns:
+                if numeric_or_none_only(pred_df[c]):
+                    numeric_cols.append(c)
+            numeric_cols = list(set(numeric_cols))  # unique only
 
-            # Histograms for each prediction column
-            cols = st.columns(min(3, len(pred_cols)))
-            for i, c in enumerate(pred_cols):
-                with cols[i % len(cols)]:
-                    vals = pred_df[c].dropna().to_numpy()
-                    if vals.size:
-                        counts, edges = np.histogram(vals, bins=len(pred_df))
-                        centers = (edges[:-1] + edges[1:]) / 2
-                        hist_df = pd.DataFrame({"bin": centers, "count": counts})
-                        hist_df["bin"] = hist_df["bin"].round(1)
-                        st.bar_chart(
-                            hist_df.set_index("bin"),
-                            x_label=f"{c}",
-                            use_container_width=True,
-                        )
-                    else:
-                        st.info(f"No numeric data to plot for {c}.")
+            if pred_cols:
+                # st.subheader("Prediction Plots")
+                # st.caption("Histograms per model and optional scatter for comparison.")
 
-            # Scatter comparison if 2+ prediction columns exist
-            if len(numeric_cols) >= 2:
-                st.write("")
-                x_col = st.selectbox("Axis X", numeric_cols, index=0, key="pred_x")
-                y_col = st.selectbox("Axis Y", numeric_cols, index=1, key="pred_y")
-                st.scatter_chart(pred_df, x=x_col, y=y_col, use_container_width=True)
-        else:
-            # Fallback: allow plotting any numeric column
-            num_cols = pred_df.select_dtypes(include=[np.number]).columns.tolist()
-            if num_cols:
-                st.subheader("Numeric Column Plot")
-                sel = st.selectbox("Select column", num_cols)
-                st.line_chart(pred_df[sel], use_container_width=True)
+                # # Histograms for each prediction column
+                # cols = st.columns(min(3, len(pred_cols)))
+                # for i, c in enumerate(pred_cols):
+                #     with cols[i % len(cols)]:
+                #         vals = pred_df[c].dropna().to_numpy()
+                #         if vals.size:
+                #             counts, edges = np.histogram(vals, bins=len(pred_df))
+                #             centers = (edges[:-1] + edges[1:]) / 2
+                #             hist_df = pd.DataFrame({"bin": centers, "count": counts})
+                #             hist_df["bin"] = hist_df["bin"].round(1)
+                #             st.bar_chart(
+                #                 hist_df.set_index("bin"),
+                #                 x_label=f"{c}",
+                #                 use_container_width=True,
+                #             )
+                #         else:
+                #             st.info(f"No numeric data to plot for {c}.")
+
+                # Scatter comparison if 2+ prediction columns exist
+                if len(numeric_cols) >= 2:
+                    st.write("")
+                    x_col = st.selectbox("Axis X", numeric_cols, index=0, key="pred_x")
+                    y_col = st.selectbox("Axis Y", numeric_cols, index=1, key="pred_y")
+                    st.scatter_chart(
+                        pred_df, x=x_col, y=y_col, use_container_width=True
+                    )
+            else:
+                # Fallback: allow plotting any numeric column
+                num_cols = pred_df.select_dtypes(include=[np.number]).columns.tolist()
+                if num_cols:
+                    st.subheader("Numeric Column Plot")
+                    sel = st.selectbox("Select column", num_cols)
+                    st.line_chart(pred_df[sel], use_container_width=True)
 
 
 def rearrange_columns(df: pd.DataFrame, first_cols: list) -> pd.DataFrame:
