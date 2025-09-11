@@ -6,10 +6,11 @@ from pathlib import Path
 import io
 import subprocess
 from typing import Tuple, Union
+import numbers
 
 import pandas as pd
 import streamlit as st
-
+import numpy as np
 
 # Repo paths
 REPO_ROOT = Path(__file__).resolve().parent
@@ -21,6 +22,13 @@ if str(CODE_DIR) not in sys.path:
 from predict import predict_all_models
 
 # No path listing; models are chosen by type and loaded from ophnet_weights/
+
+
+def numeric_or_none_only(s: pd.Series) -> bool:
+    if pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s):
+        return True
+    # For object/other dtypes: every non-null must be a number
+    return s.dropna().map(lambda x: isinstance(x, numbers.Number)).all()
 
 
 def validate_input_df(df: pd.DataFrame, seq_col: str) -> None:
@@ -44,23 +52,41 @@ def main():
         page_title="Optimal pH Predictor", page_icon="🧪", layout="centered"
     )
     st.title("🧪 Optimal pH Predictor")
-    st.caption("Upload a CSV of sequences, select a model, and download predictions.")
+    st.caption("Upload a CSV of sequences and download predictions.")
 
+    # Keep predictions across reruns so widget changes don't hide results
+    if "pred_df" not in st.session_state:
+        st.session_state.pred_df = None
+
+    # Top header: GitHub button and pipeline image
+    repo_url = "https://github.com/i-Molecule/optimalPh"
+    paper_url = "https://pubs.acs.org/doi/full/10.1021/acssynbio.4c00465"
+    header_left, header_right = st.columns([1, 3])
+    with header_left:
+        try:
+            st.link_button("Open on GitHub", repo_url, use_container_width=False)
+            st.link_button("Paper", paper_url, use_container_width=False)
+        except Exception:
+            # Fallback for older Streamlit versions
+            st.markdown(f"[Open on GitHub]({repo_url})")
+            st.markdown(f"[Paper]({paper_url})")
+    with header_right:
+        img_path = REPO_ROOT / "pictures" / "img_pipeline.jpeg"
+        if img_path.exists():
+            st.image(str(img_path), caption="Pipeline", use_container_width=True)
+        else:
+            st.warning("Image not found at pictures/img_pipeline.jpeg")
+
+    # Input controls below the header
     with st.expander("Input options", expanded=True):
         uploaded_csv = st.file_uploader(
             "Upload CSV containing sequences", type=["csv"], accept_multiple_files=False
         )
         seq_col = st.text_input("Sequence column name", value="sequence")
-    
-    st.divider()
-    col_left, col_right = st.columns([1, 1])
-    with col_left:
-        run_btn = st.button("Run prediction", type="primary", use_container_width=True)
-    with col_right:
-        st.write("")
-        st.write("")
 
-    tmp_dir = None
+    st.divider()
+    run_btn = st.button("Run prediction", type="primary", use_container_width=True)
+
     if run_btn:
         if uploaded_csv is None:
             st.error("Please upload an input CSV.")
@@ -79,15 +105,25 @@ def main():
                 with open(tmp_input_csv, "wb") as fout:
                     fout.write(file_bytes)
                 pred_df = predict_all_models(str(tmp_input_csv), seq_col)
-                
+
         except Exception as e:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             st.error(f"Prediction failed: {e}")
             st.stop()
 
+        # Cleanup temp artifacts now that prediction is done
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        pred_df = rearrange_columns(pred_df, [seq_col, "y_pred_knn", "y_pred_xgboost"])
+        # Save results for persistence across reruns
+        st.session_state.pred_df = pred_df
+        st.success("Prediction complete.")
+
+    # Show results and quick plots (persist across reruns)
+    if st.session_state.pred_df is not None:
+        pred_df = st.session_state.pred_df
 
         csv_bytes = pred_df.to_csv(index=False).encode("utf-8")
-        st.success("Prediction complete.")
         st.download_button(
             label="Download predictions CSV",
             data=csv_bytes,
@@ -96,8 +132,61 @@ def main():
             use_container_width=True,
         )
 
-    if tmp_dir is not None:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        st.divider()
+        st.subheader("Results Preview")
+        st.dataframe(pred_df, use_container_width=True)
+
+        # Quick visualization of prediction columns
+        pred_cols = ["y_pred_knn", "y_pred_xgboost"]
+        numeric_cols = ["y_pred_knn", "y_pred_xgboost"]
+        for c in pred_df.columns:
+            if numeric_or_none_only(pred_df[c]):
+                numeric_cols.append(c)
+        numeric_cols = list(set(numeric_cols))  # unique only
+
+        if pred_cols:
+            st.subheader("Prediction Plots")
+            st.caption("Histograms per model and optional scatter for comparison.")
+
+            # Histograms for each prediction column
+            cols = st.columns(min(3, len(pred_cols)))
+            for i, c in enumerate(pred_cols):
+                with cols[i % len(cols)]:
+                    vals = pred_df[c].dropna().to_numpy()
+                    if vals.size:
+                        counts, edges = np.histogram(vals, bins=len(pred_df))
+                        centers = (edges[:-1] + edges[1:]) / 2
+                        hist_df = pd.DataFrame({"bin": centers, "count": counts})
+                        hist_df["bin"] = hist_df["bin"].round(1)
+                        st.bar_chart(
+                            hist_df.set_index("bin"),
+                            x_label=f"{c}",
+                            use_container_width=True,
+                        )
+                    else:
+                        st.info(f"No numeric data to plot for {c}.")
+
+            # Scatter comparison if 2+ prediction columns exist
+            if len(numeric_cols) >= 2:
+                st.write("")
+                x_col = st.selectbox("Axis X", numeric_cols, index=0, key="pred_x")
+                y_col = st.selectbox("Axis Y", numeric_cols, index=1, key="pred_y")
+                st.scatter_chart(pred_df, x=x_col, y=y_col, use_container_width=True)
+        else:
+            # Fallback: allow plotting any numeric column
+            num_cols = pred_df.select_dtypes(include=[np.number]).columns.tolist()
+            if num_cols:
+                st.subheader("Numeric Column Plot")
+                sel = st.selectbox("Select column", num_cols)
+                st.line_chart(pred_df[sel], use_container_width=True)
+
+
+def rearrange_columns(df: pd.DataFrame, first_cols: list) -> pd.DataFrame:
+    cols = df.columns.tolist()
+    for c in reversed(first_cols):
+        if c in cols:
+            cols.insert(0, cols.pop(cols.index(c)))
+    return df[cols]
 
 
 if __name__ == "__main__":

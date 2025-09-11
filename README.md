@@ -1,4 +1,6 @@
-# OptimalPh
+# OphPred model for Optimal pH prediction
+
+![OphPred pipeline](pictures/img_pipeline.jpeg)
 
 Enzymes are widely used in biotechnology due to their ability to catalyze chemical reactions: food making, laundry, pharmaceutics, textile, brewing─all these areas benefit from utilizing various enzymes. Proton concentration (pH) is one of the key factors that define the enzyme's functioning and efficiency. Usually, there is only a narrow range of pH values where the enzyme is active. This is a common problem in biotechnology to design an enzyme with optimal activity in a given pH range. A large part of this task can be completed in silico, by predicting the optimal pH of designed candidates. The success of such computational methods critically depends on the available data. In this study, we developed a language-model-based approach to predict the optimal pH range from the enzyme sequence. We used different splitting strategies based on sequence similarity, protein family annotation, and enzyme classification to validate the robustness of the proposed approach. The derived machine-learning models demonstrated high accuracy across proteins from different protein families and proteins with lower sequence similarities compared with the training set. The proposed method is fast enough for the high-throughput virtual exploration of protein space for the search for sequences with desired optimal pH levels.
 
@@ -6,6 +8,19 @@ This repository contains everything to train and run OphPred models to predict o
 You can also run the OphPred model through the Constructor Research Platform without coding [here](https://research.constructor.tech/platform/public/project/optimalph).
 
 Please check our publication [Approaching Optimal pH Enzyme Prediction with Large Language Models](https://pubs.acs.org/doi/full/10.1021/acssynbio.4c00465) in ACS Synthetic Biology.
+
+```bibtex
+@article{zaretckii2024approaching,
+  title={Approaching optimal pH enzyme prediction with large language models},
+  author={Zaretckii, Mark and Buslaev, Pavel and Kozlovskii, Igor and Morozov, Alexander and Popov, Petr},
+  journal={ACS Synthetic Biology},
+  volume={13},
+  number={9},
+  pages={3013--3021},
+  year={2024},
+  publisher={ACS Publications}
+}
+```
 
 
 # Environment
