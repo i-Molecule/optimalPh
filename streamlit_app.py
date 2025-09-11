@@ -84,7 +84,27 @@ def main():
                 type=["csv"],
                 accept_multiple_files=False,
             )
-            seq_col = st.text_input("Sequence column name", value="sequence")
+            # Allow selecting the sequence column from the uploaded CSV's headers
+            seq_col = "sequence"
+            if uploaded_csv is not None:
+                try:
+                    # Read only the header to list columns
+                    header_df = pd.read_csv(io.BytesIO(uploaded_csv.getvalue()), nrows=0)
+                    all_cols = header_df.columns.tolist()
+                    if not all_cols:
+                        st.warning("No columns found in the uploaded CSV header.")
+                    else:
+                        default_idx = all_cols.index("sequence") if "sequence" in all_cols else 0
+                        seq_col = st.selectbox(
+                            "Sequence column",
+                            options=all_cols,
+                            index=default_idx,
+                        )
+                except Exception as e:
+                    st.warning(f"Couldn't read columns from CSV: {e}")
+            else:
+                # Fallback when no file is uploaded yet
+                seq_col = st.text_input("Sequence column name", value="sequence")
 
         st.divider()
         run_btn = st.button("Run prediction", type="primary", use_container_width=True)
