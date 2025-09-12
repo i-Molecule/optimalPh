@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 import io
 import subprocess
-from typing import Tuple, Union
+from typing import List, Tuple, Union
 import numbers
 
 import pandas as pd
@@ -20,8 +20,26 @@ if str(CODE_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_DIR))
 
 from predict import predict_all_models
+from fasta_utils import fasta_to_dataframe, looks_like_fasta
 
-# No path listing; models are chosen by type and loaded from ophnet_weights/
+# Supported extensions (deduped constants)
+FASTA_EXTS = (".fasta", ".fa", ".faa", ".fna")
+UPLOAD_TYPES = ["csv", "fasta", "fa", "faa", "fna", "txt"]
+
+standard_amino_acids = list("ACDEFGHIKLMNPQRSTVWY")
+
+
+def _is_fasta_upload(filename: str, data: bytes) -> bool:
+    name = filename.lower()
+    return name.endswith(FASTA_EXTS) or looks_like_fasta(data)
+
+
+def _to_input_df(filename: str, data: bytes, seq_col: str) -> pd.DataFrame:
+    if _is_fasta_upload(filename, data):
+        df = fasta_to_dataframe(data, include_ids=True, seq_col=seq_col)
+    else:
+        df = pd.read_csv(io.BytesIO(data))
+    return df
 
 
 def numeric_or_none_only(s: pd.Series) -> bool:
@@ -33,24 +51,59 @@ def numeric_or_none_only(s: pd.Series) -> bool:
 
 def validate_input_df(df: pd.DataFrame, seq_col: str) -> None:
     if df.empty:
-        raise ValueError("Uploaded CSV is empty.")
+        st.error("Uploaded input is empty.")
     if seq_col not in df.columns:
-        raise KeyError(f"Column `{seq_col}` not found in the uploaded CSV.")
+        st.error(f"Column `{seq_col}` not found in input.")
+
+    sequenes = df[seq_col].values
+    validate_sequences(sequenes)
 
 
-def weights_path_for(model_type: str) -> Path:
-    p = WEIGHTS_DIR / f"model_{model_type}"
-    if not p.exists():
-        raise FileNotFoundError(
-            f"Weights for '{model_type}' not found. Please add them to the app."
+def validate_sequences(sequences: List[str]) -> None:
+    invalid_seqs = []
+    starts_without_M = []
+    for i, seq in enumerate(sequences):
+        if not seq:
+            invalid_seqs.append((i + 1, seq))  # 1-based line number
+            continue
+        if seq[0] != "M":
+            starts_without_M.append((i + 1, seq))
+
+        for aa in seq:
+            if aa not in standard_amino_acids:
+                invalid_seqs.append((i + 1, seq))
+                break
+    if invalid_seqs:
+        st.warning(
+            f"Found {len(invalid_seqs)} invalid sequences (empty or non-standard amino acids)."
         )
-    return p
+    if starts_without_M:
+        st.warning(
+            f"Found {len(starts_without_M)} sequences not starting with 'M' (Methionine)."
+        )
+
+
+def extract_header(file_bytes: bytes) -> Tuple[list, pd.DataFrame]:
+    header_df = pd.read_csv(io.BytesIO(file_bytes), nrows=0)
+    all_cols = header_df.columns.tolist()
+    if not all_cols:
+        st.error("No columns found in the uploaded CSV.")
+    default_idx = all_cols.index("sequence") if "sequence" in all_cols else 0
+    return (all_cols, default_idx)
+
+
+def rearrange_columns(df: pd.DataFrame, first_cols: list) -> pd.DataFrame:
+    cols = df.columns.tolist()
+    for c in reversed(first_cols):
+        if c in cols:
+            cols.insert(0, cols.pop(cols.index(c)))
+    return df[cols]
 
 
 def main():
     st.set_page_config(page_title="Optimal pH Predictor", page_icon="🧪", layout="wide")
     st.title("🧪 Optimal pH Predictor")
-    st.caption("Upload a CSV of sequences and download predictions.")
+    st.caption("Upload protein sequences and download predictions.")
 
     # Keep predictions across reruns so widget changes don't hide results
     if "pred_df" not in st.session_state:
@@ -79,48 +132,52 @@ def main():
 
         # Input controls below the header
         with st.expander("Input options", expanded=True):
-            uploaded_csv = st.file_uploader(
-                "Upload CSV containing sequences",
-                type=["csv"],
+            uploaded_file = st.file_uploader(
+                "Upload CSV or FASTA containing sequences",
+                type=UPLOAD_TYPES,
                 accept_multiple_files=False,
             )
-            # Allow selecting the sequence column from the uploaded CSV's headers
+            # Sequence column selection (for CSV input only)
             seq_col = "sequence"
-            if uploaded_csv is not None:
-                try:
-                    # Read only the header to list columns
-                    header_df = pd.read_csv(
-                        io.BytesIO(uploaded_csv.getvalue()), nrows=0
+            is_fasta = False
+            if uploaded_file is not None:
+                # Read once; reuse later to avoid duplication
+                file_bytes = uploaded_file.getvalue()
+                # Heuristic: by extension or content
+                is_fasta = _is_fasta_upload(uploaded_file.name, file_bytes)
+
+                if not is_fasta:
+                    all_cols, default_idx = extract_header(file_bytes)
+                    seq_col = st.selectbox(
+                        "Sequence column",
+                        options=all_cols,
+                        index=default_idx,
                     )
-                    all_cols = header_df.columns.tolist()
-                    if not all_cols:
-                        st.warning("No columns found in the uploaded CSV header.")
-                    else:
-                        default_idx = (
-                            all_cols.index("sequence") if "sequence" in all_cols else 0
-                        )
-                        seq_col = st.selectbox(
-                            "Sequence column",
-                            options=all_cols,
-                            index=default_idx,
-                        )
-                except Exception as e:
-                    st.warning(f"Couldn't read columns from CSV: {e}")
+                else:
+                    st.info(
+                        "FASTA detected. Sequences will be loaded into the sequence column in a resulted CSV."
+                    )
+                    seq_col = "sequence"
             else:
                 # Fallback when no file is uploaded yet
-                seq_col = st.text_input("Sequence column name", value="sequence")
+                seq_col = st.text_input("Sequence column name (CSV)", value="sequence")
 
         st.divider()
         run_btn = st.button("Run prediction", type="primary", use_container_width=True)
 
     if run_btn:
-        if uploaded_csv is None:
-            st.error("Please upload an input CSV.")
+        if uploaded_file is None:
+            st.error("Please upload an input CSV or FASTA.")
             st.stop()
-        # Read uploaded file once into memory and validate it
-        file_bytes = uploaded_csv.getvalue()
-        input_df = pd.read_csv(io.BytesIO(file_bytes))
-        validate_input_df(input_df, seq_col)
+        # Convert to DataFrame once; uses same detection as above
+        # Reuse file_bytes from earlier block
+        input_df = _to_input_df(uploaded_file.name, file_bytes, seq_col)
+        # Validate presence of the sequence column
+        try:
+            validate_input_df(input_df, seq_col)
+        except Exception as e:
+            st.error(str(e))
+            st.stop()
 
         try:
             st.info("This may take several minutes.")
@@ -128,8 +185,11 @@ def main():
                 # Write to a temporary CSV so downstream code can read it multiple times
                 tmp_dir = tempfile.mkdtemp(prefix="oph_pred_")
                 tmp_input_csv = Path(tmp_dir) / "input.csv"
-                with open(tmp_input_csv, "wb") as fout:
-                    fout.write(file_bytes)
+                if is_fasta:
+                    input_df.to_csv(tmp_input_csv, index=False)
+                else:
+                    with open(tmp_input_csv, "wb") as fout:
+                        fout.write(file_bytes)
                 pred_df = predict_all_models(str(tmp_input_csv), seq_col)
 
         except Exception as e:
@@ -187,51 +247,37 @@ def main():
 
             # Quick visualization of prediction columns
             # Ensure prediction columns come first and keep a stable order
-            pred_cols = ["y_pred_xgboost", "y_pred_knn"]
-            numeric_cols = ["y_pred_xgboost", "y_pred_knn"]
-            for c in pred_df.columns:
-                if numeric_or_none_only(pred_df[c]) and c not in numeric_cols:
-                    numeric_cols.append(c)
+            numeric_cols = extract_numeric_cols(
+                pred_df, always_numeric_cols=["y_pred_xgboost", "y_pred_knn"]
+            )
 
-            if pred_cols:
-                # Scatter comparison if 2+ prediction columns exist
-                if len(numeric_cols) >= 2:
-                    st.write("")
-                    # Default to x: y_pred_xgboost, y: y_pred_knn when available
-                    default_x_idx = (
-                        numeric_cols.index("y_pred_xgboost")
-                        if "y_pred_xgboost" in numeric_cols
-                        else 0
-                    )
-                    default_y_idx = (
-                        numeric_cols.index("y_pred_knn")
-                        if "y_pred_knn" in numeric_cols
-                        else (1 if len(numeric_cols) > 1 else 0)
-                    )
-                    x_col = st.selectbox(
-                        "Axis X", numeric_cols, index=default_x_idx, key="pred_x"
-                    )
-                    y_col = st.selectbox(
-                        "Axis Y", numeric_cols, index=default_y_idx, key="pred_y"
-                    )
-                    st.scatter_chart(
-                        pred_df, x=x_col, y=y_col, use_container_width=True
-                    )
-            else:
-                # Fallback: allow plotting any numeric column
-                num_cols = pred_df.select_dtypes(include=[np.number]).columns.tolist()
-                if num_cols:
-                    st.subheader("Numeric Column Plot")
-                    sel = st.selectbox("Select column", num_cols)
-                    st.line_chart(pred_df[sel], use_container_width=True)
+            # Scatter comparison if 2+ prediction columns exist
+            st.write("")
+            plot_scatter_chart(pred_df, numeric_cols)
 
 
-def rearrange_columns(df: pd.DataFrame, first_cols: list) -> pd.DataFrame:
-    cols = df.columns.tolist()
-    for c in reversed(first_cols):
-        if c in cols:
-            cols.insert(0, cols.pop(cols.index(c)))
-    return df[cols]
+def extract_numeric_cols(
+    df: pd.DataFrame, always_numeric_cols=["y_pred_xgboost", "y_pred_knn"]
+) -> list:
+    numeric_cols = always_numeric_cols
+    for c in df.columns:
+        if c not in numeric_cols and numeric_or_none_only(df[c]):
+            numeric_cols.append(c)
+    return numeric_cols
+
+
+def plot_scatter_chart(df, numeric_cols):
+    default_x_idx = (
+        numeric_cols.index("y_pred_xgboost") if "y_pred_xgboost" in numeric_cols else 0
+    )
+    default_y_idx = (
+        numeric_cols.index("y_pred_knn")
+        if "y_pred_knn" in numeric_cols
+        else (1 if len(numeric_cols) > 1 else 0)
+    )
+    x_col = st.selectbox("Axis X", numeric_cols, index=default_x_idx, key="pred_x")
+    y_col = st.selectbox("Axis Y", numeric_cols, index=default_y_idx, key="pred_y")
+    st.scatter_chart(df, x=x_col, y=y_col, use_container_width=True)
 
 
 if __name__ == "__main__":

@@ -59,12 +59,9 @@ def predict_all_models(
 
     # load model
     embeddings = dataset2embeddings(input_csv, seq_col)
-
     all_predictions = {}
     for model_name in ["knn", "xgboost"]:
-        model_path = filepath.parent.joinpath(
-            "ophnet_weights", f"model_{model_name}"
-        )
+        model_path = filepath.parent.joinpath("ophnet_weights", f"model_{model_name}")
         with open(model_path, "rb") as fin:
             model = pickle.load(fin)
 
