@@ -89,12 +89,16 @@ def main():
             if uploaded_csv is not None:
                 try:
                     # Read only the header to list columns
-                    header_df = pd.read_csv(io.BytesIO(uploaded_csv.getvalue()), nrows=0)
+                    header_df = pd.read_csv(
+                        io.BytesIO(uploaded_csv.getvalue()), nrows=0
+                    )
                     all_cols = header_df.columns.tolist()
                     if not all_cols:
                         st.warning("No columns found in the uploaded CSV header.")
                     else:
-                        default_idx = all_cols.index("sequence") if "sequence" in all_cols else 0
+                        default_idx = (
+                            all_cols.index("sequence") if "sequence" in all_cols else 0
+                        )
                         seq_col = st.selectbox(
                             "Sequence column",
                             options=all_cols,
@@ -182,40 +186,34 @@ def main():
             st.dataframe(pred_df, use_container_width=True)
 
             # Quick visualization of prediction columns
-            pred_cols = ["y_pred_knn", "y_pred_xgboost"]
-            numeric_cols = ["y_pred_knn", "y_pred_xgboost"]
+            # Ensure prediction columns come first and keep a stable order
+            pred_cols = ["y_pred_xgboost", "y_pred_knn"]
+            numeric_cols = ["y_pred_xgboost", "y_pred_knn"]
             for c in pred_df.columns:
-                if numeric_or_none_only(pred_df[c]):
+                if numeric_or_none_only(pred_df[c]) and c not in numeric_cols:
                     numeric_cols.append(c)
-            numeric_cols = list(set(numeric_cols))  # unique only
 
             if pred_cols:
-                # st.subheader("Prediction Plots")
-                # st.caption("Histograms per model and optional scatter for comparison.")
-
-                # # Histograms for each prediction column
-                # cols = st.columns(min(3, len(pred_cols)))
-                # for i, c in enumerate(pred_cols):
-                #     with cols[i % len(cols)]:
-                #         vals = pred_df[c].dropna().to_numpy()
-                #         if vals.size:
-                #             counts, edges = np.histogram(vals, bins=len(pred_df))
-                #             centers = (edges[:-1] + edges[1:]) / 2
-                #             hist_df = pd.DataFrame({"bin": centers, "count": counts})
-                #             hist_df["bin"] = hist_df["bin"].round(1)
-                #             st.bar_chart(
-                #                 hist_df.set_index("bin"),
-                #                 x_label=f"{c}",
-                #                 use_container_width=True,
-                #             )
-                #         else:
-                #             st.info(f"No numeric data to plot for {c}.")
-
                 # Scatter comparison if 2+ prediction columns exist
                 if len(numeric_cols) >= 2:
                     st.write("")
-                    x_col = st.selectbox("Axis X", numeric_cols, index=0, key="pred_x")
-                    y_col = st.selectbox("Axis Y", numeric_cols, index=1, key="pred_y")
+                    # Default to x: y_pred_xgboost, y: y_pred_knn when available
+                    default_x_idx = (
+                        numeric_cols.index("y_pred_xgboost")
+                        if "y_pred_xgboost" in numeric_cols
+                        else 0
+                    )
+                    default_y_idx = (
+                        numeric_cols.index("y_pred_knn")
+                        if "y_pred_knn" in numeric_cols
+                        else (1 if len(numeric_cols) > 1 else 0)
+                    )
+                    x_col = st.selectbox(
+                        "Axis X", numeric_cols, index=default_x_idx, key="pred_x"
+                    )
+                    y_col = st.selectbox(
+                        "Axis Y", numeric_cols, index=default_y_idx, key="pred_y"
+                    )
                     st.scatter_chart(
                         pred_df, x=x_col, y=y_col, use_container_width=True
                     )
