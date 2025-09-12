@@ -56,7 +56,6 @@ pip install fairscale
 Run a simple UI to score sequences from a CSV and download predictions:
 
 ```bash
-pip install streamlit  # or add to your env
 streamlit run streamlit_app.py
 ```
 

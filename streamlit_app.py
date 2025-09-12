@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -29,12 +30,14 @@ UPLOAD_TYPES = ["csv", "fasta", "fa", "faa", "fna", "txt"]
 standard_amino_acids = list("ACDEFGHIKLMNPQRSTVWY")
 
 
-def _is_fasta_upload(filename: str, data: bytes) -> bool:
-    name = filename.lower()
+def _is_fasta_upload(filename: Union[str, os.PathLike], data: bytes) -> bool:
+    name = str(filename).lower()
     return name.endswith(FASTA_EXTS) or looks_like_fasta(data)
 
 
-def _to_input_df(filename: str, data: bytes, seq_col: str) -> pd.DataFrame:
+def _to_input_df(
+    filename: Union[str, os.PathLike], data: bytes, seq_col: str
+) -> pd.DataFrame:
     if _is_fasta_upload(filename, data):
         df = fasta_to_dataframe(data, include_ids=True, seq_col=seq_col)
     else:
@@ -83,7 +86,7 @@ def validate_sequences(sequences: List[str]) -> None:
         )
 
 
-def extract_header(file_bytes: bytes) -> Tuple[list, pd.DataFrame]:
+def extract_header(file_bytes: bytes) -> Tuple[list, int]:
     header_df = pd.read_csv(io.BytesIO(file_bytes), nrows=0)
     all_cols = header_df.columns.tolist()
     if not all_cols:
@@ -92,12 +95,24 @@ def extract_header(file_bytes: bytes) -> Tuple[list, pd.DataFrame]:
     return (all_cols, default_idx)
 
 
-def rearrange_columns(df: pd.DataFrame, first_cols: list) -> pd.DataFrame:
+def rearrange_columns(df: pd.DataFrame, first_cols: List[str]) -> pd.DataFrame:
     cols = df.columns.tolist()
     for c in reversed(first_cols):
         if c in cols:
             cols.insert(0, cols.pop(cols.index(c)))
     return df[cols]
+
+
+def parse_keyboard_input(text: str) -> pd.DataFrame:
+    """Parse raw text input into a DataFrame, handling FASTA or raw sequences."""
+    if looks_like_fasta(text):
+        st.info("FASTA format detected in typed/pasted input.")
+        df = fasta_to_dataframe(text, include_ids=True, seq_col="sequence")
+    else:
+        # Single raw sequence or comma/whitespace-separated
+        seqs = [s.strip() for s in re.split(r"[\s,]+", text.strip()) if s.strip()]
+        df = pd.DataFrame({"sequence": seqs})
+    return df
 
 
 def main():
@@ -132,46 +147,88 @@ def main():
 
         # Input controls below the header
         with st.expander("Input options", expanded=True):
-            uploaded_file = st.file_uploader(
-                "Upload CSV or FASTA containing sequences",
-                type=UPLOAD_TYPES,
-                accept_multiple_files=False,
+            # Choose input mode: file upload or manual typing
+            input_mode = st.radio(
+                "Choose input method",
+                ["Upload file", "Type/Paste sequence(s)"],
+                horizontal=True,
             )
-            # Sequence column selection (for CSV input only)
+
+            # Prepare shared variables
+            uploaded_file = None
+            file_bytes = None
             seq_col = "sequence"
             is_fasta = False
-            if uploaded_file is not None:
-                # Read once; reuse later to avoid duplication
-                file_bytes = uploaded_file.getvalue()
-                # Heuristic: by extension or content
-                is_fasta = _is_fasta_upload(uploaded_file.name, file_bytes)
+            typed_text = None
 
-                if not is_fasta:
-                    all_cols, default_idx = extract_header(file_bytes)
-                    seq_col = st.selectbox(
-                        "Sequence column",
-                        options=all_cols,
-                        index=default_idx,
-                    )
+            if input_mode == "Upload file":
+                uploaded_file = st.file_uploader(
+                    "Upload CSV or FASTA containing sequences",
+                    type=UPLOAD_TYPES,
+                    accept_multiple_files=False,
+                )
+
+                if uploaded_file is not None:
+                    # Read once; reuse later to avoid duplication
+                    file_bytes = uploaded_file.getvalue()
+                    # Heuristic: by extension or content
+                    is_fasta = _is_fasta_upload(uploaded_file.name, file_bytes)
+
+                    if not is_fasta:
+                        all_cols, default_idx = extract_header(file_bytes)
+                        seq_col = st.selectbox(
+                            "Sequence column",
+                            options=all_cols,
+                            index=default_idx,
+                        )
+                    else:
+                        st.info(
+                            "FASTA detected. Sequences will be loaded into the sequence column in a resulted CSV."
+                        )
+                        seq_col = "sequence"
                 else:
-                    st.info(
-                        "FASTA detected. Sequences will be loaded into the sequence column in a resulted CSV."
+                    # Fallback when no file is uploaded yet
+                    seq_col = st.text_input(
+                        "Sequence column name (CSV)", value="sequence"
                     )
-                    seq_col = "sequence"
             else:
-                # Fallback when no file is uploaded yet
-                seq_col = st.text_input("Sequence column name (CSV)", value="sequence")
+                # Manual typing mode
+                st.write(
+                    "Enter one or more sequences. Accepts raw sequence or FASTA format."
+                )
+                typed_text = st.text_area(
+                    "Type or paste sequence(s)",
+                    height=140,
+                    placeholder=(
+                        "Example (single sequence):\n"
+                        "MKTAYIAKQRQISFVKSHFSRQDILDLIK...\n\n"
+                        "Or FASTA format (multiple):\n"
+                        ">seq1\nMKTAYIAKQRQISFVKSHF...\n"
+                        ">seq2\nMNNNKDIIAL..."
+                    ),
+                )
+                seq_col = "sequence"
 
         st.divider()
         run_btn = st.button("Run prediction", type="primary", use_container_width=True)
 
     if run_btn:
-        if uploaded_file is None:
-            st.error("Please upload an input CSV or FASTA.")
-            st.stop()
-        # Convert to DataFrame once; uses same detection as above
-        # Reuse file_bytes from earlier block
-        input_df = _to_input_df(uploaded_file.name, file_bytes, seq_col)
+        # Build input DataFrame based on the chosen mode
+        if input_mode == "Upload file":
+            if uploaded_file is None:
+                st.error("Please upload an input CSV or FASTA.")
+                st.stop()
+            # Convert to DataFrame once; uses same detection as above
+            # Reuse file_bytes from earlier block
+            input_df = _to_input_df(uploaded_file.name, file_bytes, seq_col)
+        else:
+            # if not typed_text or not typed_text.strip():
+            if not typed_text.strip():
+                st.error("Please type or paste at least one sequence.")
+                st.stop()
+            input_df = parse_keyboard_input(typed_text)
+            is_fasta = True  # ensure we write DataFrame later
+
         # Validate presence of the sequence column
         try:
             validate_input_df(input_df, seq_col)
@@ -185,11 +242,18 @@ def main():
                 # Write to a temporary CSV so downstream code can read it multiple times
                 tmp_dir = tempfile.mkdtemp(prefix="oph_pred_")
                 tmp_input_csv = Path(tmp_dir) / "input.csv"
-                if is_fasta:
-                    input_df.to_csv(tmp_input_csv, index=False)
-                else:
+
+                # If user uploaded a non-FASTA CSV, keep original bytes; otherwise write DF
+                if (
+                    input_mode == "Upload file"
+                    and not is_fasta
+                    and file_bytes is not None
+                ):
                     with open(tmp_input_csv, "wb") as fout:
                         fout.write(file_bytes)
+                else:
+                    input_df.to_csv(tmp_input_csv, index=False)
+
                 pred_df = predict_all_models(str(tmp_input_csv), seq_col)
 
         except Exception as e:
@@ -257,7 +321,7 @@ def main():
 
 
 def extract_numeric_cols(
-    df: pd.DataFrame, always_numeric_cols=["y_pred_xgboost", "y_pred_knn"]
+    df: pd.DataFrame, always_numeric_cols: list = ["y_pred_xgboost", "y_pred_knn"]
 ) -> list:
     numeric_cols = always_numeric_cols
     for c in df.columns:
@@ -266,7 +330,7 @@ def extract_numeric_cols(
     return numeric_cols
 
 
-def plot_scatter_chart(df, numeric_cols):
+def plot_scatter_chart(df: pd.DataFrame, numeric_cols: list) -> None:
     default_x_idx = (
         numeric_cols.index("y_pred_xgboost") if "y_pred_xgboost" in numeric_cols else 0
     )
