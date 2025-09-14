@@ -5,18 +5,17 @@ import sys
 import tempfile
 from pathlib import Path
 import io
-import subprocess
 from typing import List, Tuple, Union
 import numbers
 
 import pandas as pd
 import streamlit as st
-import numpy as np
 
 # Repo paths
 REPO_ROOT = Path(__file__).resolve().parent
 CODE_DIR = REPO_ROOT / "code"
 WEIGHTS_DIR = REPO_ROOT / "ophnet_weights"
+CACHE_DIR = REPO_ROOT / ".cache"
 if str(CODE_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_DIR))
 
@@ -229,9 +228,11 @@ def main():
             input_df = parse_keyboard_input(typed_text)
             is_fasta = True  # ensure we write DataFrame later
 
-        # Validate presence of the sequence column
+        # Validate presence of the sequence column and save it if it's ok
         try:
             validate_input_df(input_df, seq_col)
+            if CACHE_DIR.exists():
+                save_df_w_unique_name(input_df, directory=CACHE_DIR, prefix="input_")
         except Exception as e:
             st.error(str(e))
             st.stop()
@@ -240,29 +241,11 @@ def main():
             st.info("This may take several minutes.")
             with st.spinner("Running prediction…"):
                 # Write to a temporary CSV so downstream code can read it multiple times
-                tmp_dir = tempfile.mkdtemp(prefix="oph_pred_")
-                tmp_input_csv = Path(tmp_dir) / "input.csv"
-
-                # If user uploaded a non-FASTA CSV, keep original bytes; otherwise write DF
-                if (
-                    input_mode == "Upload file"
-                    and not is_fasta
-                    and file_bytes is not None
-                ):
-                    with open(tmp_input_csv, "wb") as fout:
-                        fout.write(file_bytes)
-                else:
-                    input_df.to_csv(tmp_input_csv, index=False)
-
-                pred_df = predict_all_models(str(tmp_input_csv), seq_col)
+                pred_df = predict_all_models(input_df, seq_col)
 
         except Exception as e:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
             st.error(f"Prediction failed: {e}")
             st.stop()
-
-        # Cleanup temp artifacts now that prediction is done
-        shutil.rmtree(tmp_dir, ignore_errors=True)
 
         pred_df = rearrange_columns(pred_df, [seq_col, "y_pred_knn", "y_pred_xgboost"])
         # Save results for persistence across reruns
@@ -342,6 +325,40 @@ def plot_scatter_chart(df: pd.DataFrame, numeric_cols: list) -> None:
     x_col = st.selectbox("Axis X", numeric_cols, index=default_x_idx, key="pred_x")
     y_col = st.selectbox("Axis Y", numeric_cols, index=default_y_idx, key="pred_y")
     st.scatter_chart(df, x=x_col, y=y_col, use_container_width=True)
+
+
+def save_df_w_unique_name(
+    df: pd.DataFrame,
+    directory: Union[str, os.PathLike],
+    prefix: str = "data_",
+    index: bool = False,
+    **save_kwargs,
+) -> str:
+    """
+    Save a DataFrame to `directory` with a unique, non-colliding filename.
+
+    Args:
+        df: pandas DataFrame to save.
+        directory: target folder.
+        prefix: filename prefix.
+        fmt: one of {"csv", "parquet", "json", "pickle"}.
+        index: include index in the saved file.
+        **save_kwargs: passed through to the corresponding pandas writer.
+
+    Returns:
+        str: absolute path to the saved file.
+    """
+
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+
+    # Reserve a unique filename atomically (prevents race collisions)
+    fd, path = tempfile.mkstemp(prefix=prefix, suffix=".csv", dir=str(directory))
+    os.close(fd)  # we'll reopen with pandas
+
+    df.to_csv(path, index=index, **save_kwargs)
+
+    return str(Path(path).resolve())
 
 
 if __name__ == "__main__":

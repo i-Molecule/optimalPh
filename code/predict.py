@@ -13,7 +13,7 @@ filepath = Path(__file__).resolve().parent
 esm_code = filepath.parent.joinpath("esm_embeddings/ml")
 sys.path.append(str(esm_code))
 
-from dataloader_v1 import process_dataset
+from dataloader_v1 import process_dataset, sequences2embeddings
 
 
 def dataset2embeddings(input_csv: Union[str, os.PathLike], seq_col: str) -> np.ndarray:
@@ -53,12 +53,20 @@ def predict(
 
 
 def predict_all_models(
-    input_csv: Union[str, os.PathLike],
+    input_data: Union[str, os.PathLike, pd.DataFrame],
     seq_col: str,
-):
+) -> pd.DataFrame:
+    """Take either a CSV file path or a DataFrame as input.
+    Return a DataFrame with predictions from knn and xgboost models.
+    """
+    if isinstance(input_data, pd.DataFrame):
+        sequences = input_data[seq_col].values.tolist()
+        embeddings = sequences2embeddings(sequences)
+        df = input_data
+    elif isinstance(input_data, (str, os.PathLike)):
+        embeddings = dataset2embeddings(input_data, seq_col)
+        df = pd.read_csv(input_data)
 
-    # load model
-    embeddings = dataset2embeddings(input_csv, seq_col)
     all_predictions = {}
     for model_name in ["knn", "xgboost"]:
         model_path = filepath.parent.joinpath("ophnet_weights", f"model_{model_name}")
@@ -69,7 +77,6 @@ def predict_all_models(
 
         all_predictions[f"y_pred_{model_name}"] = predictions.flatten().tolist()
 
-    df = pd.read_csv(input_csv)
     for key, value in all_predictions.items():
         df[key] = value
 

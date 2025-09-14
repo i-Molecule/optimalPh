@@ -221,6 +221,10 @@ def process_dataset(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
     embeddings = get_esm_embeddings_batched(sequences, model, batch_converter)
     return embeddings, y
 
+def sequences2embeddings(sequences:List[str]) -> np.ndarray:
+    model, batch_converter = load_esm_model()
+    embeddings = get_esm_embeddings_batched(sequences, model, batch_converter)
+    return embeddings
 
 def main(
     input_csv: Union[str, os.PathLike],
