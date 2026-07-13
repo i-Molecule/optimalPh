@@ -1,3 +1,5 @@
+[![License: PolyForm-Noncommercial-1.0.0](https://img.shields.io/badge/License-PolyForm--Noncommercial--1.0.0-orange.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0)
+
 # OphPred model for Optimal pH prediction
 
 ![OphPred pipeline](pictures/img_pipeline.jpeg)
@@ -97,3 +99,11 @@ JSON file containing info about your model should look as follows:
 ```bash
 python3 code/final_train.py --models experiments/best_models.json --data data/embeddings/brenda_new_emb.npy --output_dir weights/ --prefix model --csv_input data/datasets/brenda_new.csv
 ```
+
+---
+
+## 📄 License
+
+This project is available under the PolyForm Noncommercial license. 
+
+For commercial use, collaboration, or to request an alternative license, please contact [Petr Popov](mailto:popov.petrus@gmail.com).
